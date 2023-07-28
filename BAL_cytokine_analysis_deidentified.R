@@ -16,10 +16,12 @@ require(ComplexHeatmap)
 source("../code/util/pairwise_wilcox_test.R")
 
 ## Read in data
-cyto <- read.csv("deidentified_data/deidentified_cytokine_data.csv", check.names = FALSE)
-meta <- read.csv("deidentified_data/deidentified_metadata.csv")
-
-palette <- setNames(ggsci::pal_npg("nrc")(3), c("RPRA", "Healthy", "RPRA (transplant)"))
+cyto <- read.csv(
+    file = "deidentified_data/deidentified_cytokine_data.csv",
+    check.names = FALSE
+)
+palette <- setNames(ggsci::pal_npg("nrc")(3),
+                    c("RPRA", "Healthy", "RPRA (transplant)"))
 
 ## Fix analyte names
 cyto[cyto$analyte == "Eotaxin", "analyte"] <- "Eotaxin-1"
@@ -63,12 +65,13 @@ sub_greek <- function(v) {
         gn <- substr(g[2], 1, nchar(g[2]) - 1)
         if (gn %in% c("MIP-1", "IL-1", "TNF")) {
             gl <- substr(g[2], nchar(g[2]), nchar(g[2]))
+            g1 <- paste(g[1], "(", gn, sep = '')
             if (gl == 'a') {
-                return(as.expression(bquote(.(paste(g[1], "(", gn, sep = '')) * alpha * .(")"))))
+                return(as.expression(bquote(.(g1) * alpha * .(")"))))
             } else if (gl == 'b') {
-                return(as.expression(bquote(.(paste(g[1], "(", gn, sep = '')) * beta * .(")"))))
+                return(as.expression(bquote(.(g1) * beta * .(")"))))
             } else if (gl == 'd') {
-                return(as.expression(bquote(.(paste(g[1], "(", gn, sep = '')) * delta * .(")"))))
+                return(as.expression(bquote(.(g1) * delta * .(")"))))
             }
         }
         return(x)
@@ -101,7 +104,8 @@ for (i in 1:length(analytes)) {
               panel.grid.minor.y = element_blank(),
               plot.title = element_text(hjust = 0.5))
     if (dim(comparisons)[1] > 0) {
-        signif_plots[[length(signif_plots) + 1]] <- pplt +
+        signif_plots[[length(signif_plots) + 1]] <-
+            pplt +
             ylim(c(0, max(comparisons$y))) +
             ggsignif::geom_signif(xmin = comparisons$xmin,
                                   xmax = comparisons$xmax,
@@ -129,37 +133,45 @@ nonsignif_boxplots <- ylabel +
 
 ## Hierarchical clustering
 cyto_sub <- tibble::column_to_rownames(cyto, "Subject_ID")
-group_annot <- dplyr::select(cyto_sub, Group) %>% dplyr::rename(Diagnosis = Group)
+group_annot <- cyto_sub %>% dplyr::select(Group) %>% dplyr::rename(Diagnosis = Group)
 cyto_mat <- cyto_sub %>% dplyr::select(-diagnosis, -Group) %>% as.matrix() %>% t()
 
+## z-score matrix rows
 scale_rows <- function(x) {
     m = apply(x, 1, mean, na.rm = T)
     s = apply(x, 1, sd, na.rm = T)
     return((x - m) / s)
 }
 cyto_mat_scaled <- scale_rows(cyto_mat)
-s <- ceiling(max(abs(min(cyto_mat_scaled)), max(cyto_mat_scaled)))
 
+legend_param <- function(s, l) {
+    list(legend_height = unit(l, "cm"), at = seq(-s, s, s/2))
+}
+
+s <- ceiling(max(abs(min(cyto_mat_scaled)), max(cyto_mat_scaled)))
 ph_pal <- colorRampPalette(rev(RColorBrewer::brewer.pal(n = 7, name = "RdBu")))(1001)
-heatmap <- ComplexHeatmap::pheatmap(scale_rows(cyto_mat),
-                                    cluster_rows = T,
-                                    cluster_cols = T,
-                                    angle_col = '45',
-                                    cellheight = 16,
-                                    cellwidth = 18,
-                                    clustering_method = "ward.D2",
-                                    scale = "none",
-                                    border_color = NA,
-                                    color = ph_pal,
-                                    breaks = seq(-s, s, length.out = length(ph_pal)),
-                                    labels_row = convert_greek(rownames(cyto_mat)),
-                                    annotation_col = group_annot,
-                                    annotation_color = list(Diagnosis = palette),
-                                    name = "Mean\nconcentration",
-                                    heatmap_legend_param = list(legend_height = unit(4, "cm"),
-                                                                at = seq(-s, s, s/2)))
-heatmap <- patchwork::wrap_elements(grid::grid.grabExpr(ComplexHeatmap::draw(heatmap,
-                                                                             merge_legend = T)))
+
+heatmap <- ComplexHeatmap::pheatmap(
+    scale_rows(cyto_mat),
+    cluster_rows = T,
+    cluster_cols = T,
+    angle_col = '45',
+    cellheight = 16,
+    cellwidth = 18,
+    clustering_method = "ward.D2",
+    scale = "none",
+    border_color = NA,
+    color = ph_pal,
+    breaks = seq(-s, s, length.out = length(ph_pal)),
+    labels_row = convert_greek(rownames(cyto_mat)),
+    annotation_col = group_annot,
+    annotation_color = list(Diagnosis = palette),
+    name = "Mean\nconcentration",
+    heatmap_legend_param = legend_param(s, 4)
+)
+heatmap <- patchwork::wrap_elements(
+    grid::grid.grabExpr(ComplexHeatmap::draw(heatmap, merge_legend = T))
+)
 
 ## Correlation with CT features
 ct_features <- c("Normal", "Fibrotic", "Inflammatory", "Nodularity")
@@ -182,10 +194,13 @@ for (i in 1:length(analytes)) {
         x <- cyto_ct[,analytes[i]]
         y <- cyto_ct[,ct_features[j]]
         cor_mat[i, j] <- cor(x, y, method = "spearman")
-        test <- coin::spearman_test(x ~ y, data = data.frame(x, y),
-                                    distribution = coin::approximate(nresample = 1e6,
-                                                                     parallel = "multicore",
-                                                                     ncpus = 16))
+        test <- coin::spearman_test(
+            x ~ y,
+            data = data.frame(x, y),
+            distribution = coin::approximate(nresample = 1e6,
+                                             parallel = "multicore",
+                                             ncpus = 16)
+        )
         p_mat[i, j] <- coin::pvalue(test)[1]
     }
 }
@@ -193,7 +208,9 @@ for (i in 1:length(analytes)) {
 cor_df <- reshape2::melt(cor_mat) %>% dplyr::rename(Correlation = value)
 p_df <- reshape2::melt(p_mat) %>% dplyr::rename(pval = value)
 p_adj <- p.adjust(as.vector(p_df$pval, mode = "numeric"), method = "fdr")
-cor_df_full <- dplyr::mutate(dplyr::full_join(cor_df, p_df, by = c("Var1", "Var2")), padj = p_adj)
+cor_df_full <- cor_df %>%
+    dplyr::full_join(p_df, by = c("Var1", "Var2")) %>%
+    dplyr::mutate(padj = p_adj)
 
 ## Add annotations
 cor_mat_vec <- as.vector(cor_mat, mode = "numeric")
@@ -204,26 +221,28 @@ p_adj_mat <- matrix(p_adj, nrow = dim(cor_mat)[1], dimnames = dimnames(p_mat))
 annot_mat <- matrix(annot, nrow = dim(cor_mat)[1], dimnames = dimnames(p_mat))
 
 ## Plot CT correlation matrix
-ct_corr <- ComplexHeatmap::pheatmap(t(cor_mat),
-                                    cluster_rows = T,
-                                    cluster_cols = T,
-                                    angle_col = '45',
-                                    cellheight = 20,
-                                    cellwidth = 22,
-                                    clustering_method = "ward.D2",
-                                    scale = "none",
-                                    breaks = seq(-1, 1, length.out = length(ph_pal)),
-                                    border_color = NA,
-                                    color = ph_pal,
-                                    labels_col = convert_greek(rownames(cor_mat)),
-                                    display_numbers = t(annot_mat),
-                                    number_color = "black",
-                                    fontsize_number = 8,
-                                    name = "Correlation",
-                                    heatmap_legend_param = list(legend_height = unit(3, "cm"),
-                                                                at = seq(-1, 1, 0.5)))
-ct_corr <- patchwork::wrap_elements(grid::grid.grabExpr(ComplexHeatmap::draw(ct_corr,
-                                                                             merge_legend = T)))
+ct_corr <- ComplexHeatmap::pheatmap(
+    t(cor_mat),
+    cluster_rows = T,
+    cluster_cols = T,
+    angle_col = '45',
+    cellheight = 20,
+    cellwidth = 22,
+    clustering_method = "ward.D2",
+    scale = "none",
+    breaks = seq(-1, 1, length.out = length(ph_pal)),
+    border_color = NA,
+    color = ph_pal,
+    labels_col = convert_greek(rownames(cor_mat)),
+    display_numbers = t(annot_mat),
+    number_color = "black",
+    fontsize_number = 8,
+    name = "Correlation",
+    heatmap_legend_param = legend_param(1, 3)
+)
+ct_corr <- patchwork::wrap_elements(
+    grid::grid.grabExpr(ComplexHeatmap::draw(ct_corr, merge_legend = T))
+)
 
 ## Point and line plots
 plplots <- list()
@@ -234,14 +253,13 @@ for (i in 1:length(analytes)) {
         fname <- gsub('-|/| ', '_', paste(analyte, ct, sep = '_'))
         
         df <- data.frame(x = cyto_ct[,ct], y = cyto_ct[,analyte])
+        ql <- paste0("q==", deparse(sprintf("%.3f", p_adj_mat[i, j])))
+        rl <- paste0("rho==", deparse(sprintf("%.3f", cor(df$x, df$y, method = "s"))))
         pplt <- ggplot(df, aes(x, y)) +
             geom_point() +
             stat_smooth(method = "lm", formula = y ~ x) +
-            annotate("text", x = min(df$x), y = c(1.06, 1.13) * max(df$y), hjust = 0,
-                     label = c(paste0("q==", deparse(sprintf("%.3f", p_adj_mat[i, j]))),
-                               paste0("rho==", deparse(sprintf("%.3f",
-                                                               cor(df$x, df$y, method = "s"))))),
-                     parse = TRUE) +
+            annotate("text", x = min(df$x), y = c(1.06, 1.13) * max(df$y),
+                     hjust = 0, label = c(ql, rl), parse = TRUE) +
             xlab(paste(ct, "fraction of lung")) +
             ylab("Mean concentration") +
             ggtitle(analyte) +
@@ -257,8 +275,10 @@ for (i in 1:length(analytes)) {
 
 ## Deconvolution
 # Only significant cytokines
-mean_expr <- read.csv("deidentified_data/deidentified_cytokine_mean_expression.csv",
-                      check.names = FALSE)
+mean_expr <- read.csv(
+    file = "deidentified_data/deidentified_cytokine_mean_expression.csv",
+    check.names = FALSE
+)
 colnames(mean_expr)[1] <- "Analyte"
 mean_expr <- tibble::column_to_rownames(mean_expr, "Analyte")
 colnames(mean_expr) <- gsub("macrophages", "MPs", colnames(mean_expr))
@@ -281,19 +301,24 @@ deconv <- ComplexHeatmap::pheatmap(
     color = ph_pal,
     breaks = seq(-s, s, length.out = length(ph_pal)),
     name = "Mean\nexpression",
-    heatmap_legend_param = list(legend_height = unit(4, "cm"),
-                                at = seq(-s, s, s/2))
+    heatmap_legend_param = legend_param(s, 4)
 )
-deconv <- patchwork::wrap_elements(grid::grid.grabExpr(ComplexHeatmap::draw(deconv,
-                                                                            merge_legend = T)))
+deconv <- patchwork::wrap_elements(
+    grid::grid.grabExpr(ComplexHeatmap::draw(deconv, merge_legend = T))
+)
+
 # All cytokines
-mean_expr_all <- read.csv("deidentified_data/deidentified_cytokine_mean_expression_all.csv",
-                          check.names = FALSE)
+mean_expr_all <- read.csv(
+    file = "deidentified_data/deidentified_cytokine_mean_expression_all.csv",
+    check.names = FALSE
+)
 colnames(mean_expr_all)[1] <- "Analyte"
 mean_expr_all <- tibble::column_to_rownames(mean_expr_all, "Analyte")
 
 mean_expr_all_scaled <- scale_rows(as.matrix(mean_expr_all))
 s <- ceiling(max(abs(min(mean_expr_all_scaled)), max(mean_expr_all_scaled)))
+
+
 
 deconv_all <- ComplexHeatmap::pheatmap(
     t(mean_expr_all_scaled),
@@ -309,17 +334,19 @@ deconv_all <- ComplexHeatmap::pheatmap(
     color = ph_pal,
     breaks = seq(-s, s, length.out = length(ph_pal)),
     name = "Mean\nexpression",
-    heatmap_legend_param = list(legend_height = unit(5, "cm"),
-                                at = seq(-s, s, s/2))
+    heatmap_legend_param = legend_param(s, 5)
 )
-deconv_all <- patchwork::wrap_elements(grid::grid.grabExpr(ComplexHeatmap::draw(deconv_all,
-                                                                                merge_legend = T)))
+deconv_all <- patchwork::wrap_elements(
+    grid::grid.grabExpr(ComplexHeatmap::draw(deconv_all, merge_legend = T))
+)
 
 
 ## Build Figure 5
 get_annot <- function (x) {
-    patchwork::plot_annotation(title = x,
-                               theme = theme(plot.title = element_text(face = 2, size = 20)))
+    patchwork::plot_annotation(
+        title = x,
+        theme = theme(plot.title = element_text(face = 2, size = 20))
+    )
 }
 thm <- theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))
 
