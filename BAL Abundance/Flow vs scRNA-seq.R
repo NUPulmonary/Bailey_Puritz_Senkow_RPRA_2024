@@ -6,11 +6,9 @@ set.seed(0)
 
 library(ggplot2)
 library(dplyr)
-
-require(tidyr)
-require(tibble)
-require(patchwork)
-require(reshape2)
+library(tidyr)
+library(patchwork)
+library(reshape2)
 
 ## Read in scRNA-seq abundance data
 scrna <- read.csv("deidentified_data/deidentified_BAL_cell_counts.csv",
@@ -24,7 +22,7 @@ flow <- read.csv("deidentified_data/deidentified_flow_cytometry_data.csv",
                  check.names = FALSE) %>%
     dplyr::filter(Study_ID != "RPRA13 (donor)") %>%
     dplyr::select(-Group) %>%
-    tidyr::drop_na()
+    drop_na()
 
 ## Renormalize abundances (rounding errors)
 data_cols <- setdiff(colnames(flow), "Study_ID")
@@ -38,8 +36,8 @@ flow[l_ix, 2:dim(flow)[2]] <- sapply(flow[flow$Study_ID %in% lr_ids, -1], mean)
 flow <- dplyr::filter(flow, !Study_ID %in% lr_ids)
 
 ## Melt flow data frame
-flow <- reshape2::melt(flow, id.vars = "Study_ID", variable.name = "cell_type",
-                       value.name = "cell_proportion")
+flow <- melt(flow, id.vars = "Study_ID", variable.name = "cell_type",
+             value.name = "cell_proportion")
 
 ## Only keep samples with scRNA-seq libraries and flow cytometry samples
 common_ids <- intersect(unique(flow$Study_ID), unique(scrna$Study_ID))
@@ -127,6 +125,6 @@ for (i in c(4, 5, 6)) {
 }
 
 # Combine and save
-pplt <- patchwork::wrap_plots(plots, ncol = 3)
-ggsave(filename = "figures/fig_s3/fig_s3_d.pdf", plot = pplt,
+ggsave(filename = "figures/fig_s3/fig_s3_d.pdf",
+       plot = wrap_plots(plots, ncol = 3),
        width = 9, height = 6, device = cairo_pdf)

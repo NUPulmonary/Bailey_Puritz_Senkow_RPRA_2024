@@ -4,9 +4,15 @@ set.seed(1, kind = "L'Ecuyer-CMRG")
 library(ggplot2)
 library(dplyr)
 library(tidyr)
-
-require(tibble)
-require(patchwork)
+library(tibble)
+library(patchwork)
+library(coin)
+library(ggsci)
+library(ggsignif)
+library(grid)
+library(reshape2)
+library(ComplexHeatmap)
+library(RColorBrewer)
 
 source("../code/util/pairwise_wilcox_test.R")
 
@@ -30,7 +36,7 @@ all_comps <- boxplot_signif(flow, cell_types, group.var = "Status",
                             var.name = "cell_type", annot = "value")
 
 ## Create boxplots
-palette <- setNames(ggsci::pal_npg("nrc")(3), c("RPRA", "Healthy", "RPRA (transplant)"))
+palette <- setNames(pal_npg("nrc")(3), c("RPRA", "Healthy", "RPRA (transplant)"))
 signif_plots <- list()
 nonsignif_plots <- list()
 for (i in 1:length(cell_types)) {
@@ -59,13 +65,13 @@ for (i in 1:length(cell_types)) {
     if (dim(comparisons)[1] > 0) {
         signif_plots[[length(signif_plots) + 1]] <- pplt +
             ylim(c(0, 1.06 * max(comparisons$y))) +
-            ggsignif::geom_signif(xmin = comparisons$xmin,
-                                  xmax = comparisons$xmax,
-                                  y_position = 0.97 * comparisons$y,
-                                  annotation = comparisons$annot,
-                                  tip_length = 0,
-                                  vjust = -0.225,
-                                  textsize = 3.5)
+            geom_signif(xmin = comparisons$xmin,
+                        xmax = comparisons$xmax,
+                        y_position = 0.97 * comparisons$y,
+                        annotation = comparisons$annot,
+                        tip_length = 0,
+                        vjust = -0.225,
+                        textsize = 3.5)
     } else {
         nonsignif_plots[[length(nonsignif_plots) + 1]] <- pplt
     }
@@ -73,25 +79,22 @@ for (i in 1:length(cell_types)) {
 
 ylabel <- ggplot(data.frame(l = "Percent of total cells", x = 1, y = 1)) +
     geom_text(aes(x, y, label = l), angle = 90, size = 4) +
-    theme_void() +
-    coord_cartesian(clip = "off")
-signif_bps <- ylabel +
-    patchwork::wrap_plots(signif_plots, nrow = 1) +
-    patchwork::plot_layout(widths = c(1, 30))
-nonsignif_bps <- ylabel +
-    patchwork::wrap_plots(nonsignif_plots, ncol = 2) +
-    patchwork::plot_layout(widths = c(1, 30))
+    theme_void() + coord_cartesian(clip = "off")
+signif_bps <- ylabel + wrap_plots(signif_plots, nrow = 1) +
+    plot_layout(widths = c(1, 30))
+nonsignif_bps <- ylabel + wrap_plots(nonsignif_plots, ncol = 2) +
+    plot_layout(widths = c(1, 30))
 
 
 ## Hierarchical clustering
-flow2 <- tibble::column_to_rownames(flow, "Study_ID")
+flow2 <- column_to_rownames(flow, "Study_ID")
 group_annot <- dplyr::select(flow2, Diagnosis = Group)
 flow_mat <- t(as.matrix(dplyr::select(flow2, -Group, -Status)))
 
 pheatmap2ggplot <- function (ph) {
-    patchwork::wrap_elements(grid::grid.grabExpr(ComplexHeatmap::draw(ph)))
+    wrap_elements(grid.grabExpr(ComplexHeatmap::draw(ph)))
 }
-ph_pal <- colorRampPalette(rev(RColorBrewer::brewer.pal(n = 7, name = "RdBu")))(1001)
+ph_pal <- colorRampPalette(rev(brewer.pal(n = 7, name = "RdBu")))(1001)
 
 scale_rows <- function(x) {
     m = apply(x, 1, mean, na.rm = T)
@@ -151,8 +154,8 @@ for (i in 1:length(cell_types)) {
     }
 }
 
-cor_df <- reshape2::melt(cor_mat) %>% dplyr::rename(Correlation = value)
-p_df <- reshape2::melt(p_mat) %>% dplyr::rename(pval = value)
+cor_df <- cor_mat %>% melt() %>% dplyr::rename(Correlation = value)
+p_df <- p_mat %>% melt() %>% dplyr::rename(pval = value)
 p_adj <- p.adjust(as.vector(p_df$pval, mode = "numeric"), method = "fdr")
 
 # Add significance codes
@@ -219,10 +222,7 @@ for (i in 1:length(cell_types)) {
 
 ### Build figures
 get_annot <- function (x) {
-    patchwork::plot_annotation(
-        title = x,
-        theme = theme(plot.title = element_text(face = 2, size = 20))
-    )
+    plot_annotation(title = x, theme = theme(plot.title = element_text(face = 2, size = 20)))
 }
 
 ## Build Figure 2
@@ -250,16 +250,16 @@ cl_bar <- ggplot(data = data.frame(
           axis.ticks.x = element_blank(),
           axis.text.y = element_blank(),
           axis.ticks.y = element_blank())
-fig_2a <- patchwork::wrap_elements(
+fig_2a <- wrap_elements(
     heatmap +
-    patchwork::inset_element(cl_bar, 0.025, -0.16, 0.809, 0.9) +
+    inset_element(cl_bar, 0.025, -0.16, 0.809, 0.9) +
     get_annot("a")
 )
-fig_2b <- patchwork::wrap_elements(signif_bps + get_annot("b"))
-fig_2c <- patchwork::wrap_elements(ct_corr + get_annot("c"))
+fig_2b <- wrap_elements(signif_bps + get_annot("b"))
+fig_2c <- wrap_elements(ct_corr + get_annot("c"))
 
 fig2 <- fig_2a + fig_2b + fig_2c +
-    patchwork::plot_layout(
+    plot_layout(
         design = c(patchwork::area(t = 1, b = 1, l = 1, r = 2),
                    patchwork::area(t = 2, b = 2, l = 1, r = 1),
                    patchwork::area(t = 2, b = 2, l = 2, r = 2)),
@@ -279,12 +279,12 @@ ylabel <- ggplot(data.frame(l = "Percent of total cells", x = 1, y = 1)) +
     theme_void() +
     coord_cartesian(clip = "off")
 ct_plots <- ylabel +
-    patchwork::wrap_plots(lapply(fnames, function (x) { plplots[[x]] }), ncol = 2) +
-    patchwork::plot_layout(widths = c(1, 30))
+    wrap_plots(lapply(fnames, function (x) { plplots[[x]] }), ncol = 2) +
+    plot_layout(widths = c(1, 30))
 
-fig_s2a <- patchwork::wrap_elements(nonsignif_bps + get_annot("a"))
-fig_s2b <- patchwork::wrap_elements(ct_plots + get_annot("b"))
-fig_s2 <- fig_s2a + fig_s2b + patchwork::plot_layout(ncol = 2)
+fig_s2a <- wrap_elements(nonsignif_bps + get_annot("a"))
+fig_s2b <- wrap_elements(ct_plots + get_annot("b"))
+fig_s2 <- fig_s2a + fig_s2b + plot_layout(ncol = 2)
 
 ggsave(plot = fig_s2, filename = "figures/fig_s2/fig_s2.pdf",
        width = 14, height = 10, device = cairo_pdf)
