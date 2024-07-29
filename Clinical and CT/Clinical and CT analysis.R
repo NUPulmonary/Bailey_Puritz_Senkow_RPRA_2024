@@ -1,20 +1,18 @@
-setwd("/projects/b1038/Pulmonary/cpuritz/PASC/data")
 set.seed(0)
 
 library(dplyr)
 library(ggplot2)
 library(patchwork)
+library(ggsignif)
+library(ggalluvial)
 
-require(ggsignif)
-require(ggalluvial)
-
-source("../code/util/pairwise_wilcox_test.R")
+source("code/util/pairwise_wilcox_test.R")
 
 ##------------ Analysis of CT data ------------##
 
-## Read in data
-meta <- read.csv("deidentified_data/deidentified_metadata.csv")
-ct_data <- read.csv("deidentified_data/deidentified_ct_data.csv")
+# Read in data
+meta <- read.csv("data/deidentified_data/deidentified_metadata.csv")
+ct_data <- read.csv("data/deidentified_data/deidentified_ct_data.csv")
 ct_data <- ct_data %>%
     dplyr::filter(Type != "Wildcard") %>%
     dplyr::filter(Region == "WholeLung") %>%
@@ -22,7 +20,7 @@ ct_data <- ct_data %>%
 
 tf_cols <- unique(ct_data$Type)
 
-## Use new categories
+# Use new categories
 buckets <- list(
     "Normal" = c("NormalNotInflamed"),
     "Fibrotic" = c("Honeycombing", "LinearScar", "Fibronodular", "Reticular",
@@ -44,22 +42,21 @@ group_scans <- function(df, time) {
     }
     dplyr::select(df, -dplyr::all_of(tf_cols))
 }
-
 ct_pre <- group_scans(ct_data, "Scan 1")
 ct_post <- group_scans(ct_data, "Scan 2")
 
-## Renormalize type fractions
+# Renormalize type fractions
 ct_pre[names(buckets)] <- ct_pre[names(buckets)] / rowSums(ct_pre[names(buckets)])
 ct_post[names(buckets)] <- ct_post[names(buckets)] / rowSums(ct_post[names(buckets)])
 
-## Statistics of interest
+# Statistics of interest
 for (f in names(buckets)) {
-    print(sprintf("%s: %.1f +/- %.1f", f, 100*mean(ct_pre[[f]]), 100*sd(ct_pre[[f]])))
+    print(sprintf("%s: %.1f +/- %.1f", f, 100 * mean(ct_pre[[f]]), 100 * sd(ct_pre[[f]])))
 }
 
-## Boxplots to illustrate compositions of scans
-scan_composition <- ggplot(reshape2::melt(ct_pre, id.vars = "Subject_ID"),
-                           aes(x = variable, y = value)) +
+# Boxplots to illustrate compositions of scans
+scan_composition <-
+    ggplot(reshape2::melt(ct_pre, id.vars = "Subject_ID"), aes(x = variable, y = value)) +
     geom_boxplot(aes(fill = variable), outlier.shape = NA) +
     geom_jitter(shape = 16, width = 0.15, height = 0) +
     xlab(NULL) +
@@ -78,7 +75,7 @@ scan_composition <- ggplot(reshape2::melt(ct_pre, id.vars = "Subject_ID"),
           axis.title.y = element_text(size = 12, color = "black"))
 
 
-## Boxplots of paired pre/post scans
+# Boxplots of paired pre/post scans
 ct_pair <- dplyr::full_join(dplyr::mutate(ct_pre, Time = "Scan 1"),
                             dplyr::mutate(ct_post, Time = "Scan 2"),
                             by = c(names(ct_pre), "Time"))
@@ -125,7 +122,7 @@ pre_post_boxplots <-
           panel.grid.minor = element_blank())
 
 
-## Merge pre and post scans into one data frame
+# Merge pre and post scans into one data frame
 ct_all <- dplyr::full_join(ct_pre, ct_post, by = "Subject_ID")
 for (x in setdiff(names(ct_pre), "Subject_ID")) {
     ct_all <- ct_all %>%
@@ -135,25 +132,24 @@ for (x in setdiff(names(ct_pre), "Subject_ID")) {
         dplyr::rename(!!paste(x, "(post)") := paste0(x, ".y"))
 }
 
-## Save output
-write.csv(ct_pre, file = "deidentified_data/deidentified_ct_scan_1_data.csv", row.names = FALSE)
-write.csv(ct_post, file = "deidentified_data/deidentified_ct_scan_2_data.csv", row.names = FALSE)
-write.csv(ct_all, file = "deidentified_data/deidentified_ct_data_all.csv", row.names = FALSE)
-
+# Save output
+dfile <- "data/deidentified_data/deidentified_ct_"
+write.csv(ct_pre, file = paste0(dfile, "scan_1_data.csv"), row.names = FALSE)
+write.csv(ct_post, file = paste0(dfile, "scan_2_data.csv"), row.names = FALSE)
+write.csv(ct_all, file = paste0(dfile, "data_all.csv"), row.names = FALSE)
 
 ##---------------------------------------------##
 
 
 ##---------- Build clinical timeline ----------##
-## Read in data
+# Read in data
 clinical <- meta
 
-## Subset to columns of interest
+# Subset to columns of interest
 cols <- c("COVID._date", "acute_COVID_admission_date",
           "acute_COVID_intubation_date", "acute_COVID_extubation_date",
-          "acute_COVID_discharge_date", "CT.scan.1.date",
-          "CT.scan.2.date", "Steroid.start.date", "Steroid.end.date",
-          "Bronch.date", "PFT.date")
+          "acute_COVID_discharge_date", "CT.scan.1.date", "CT.scan.2.date",
+          "Steroid.start.date", "Steroid.end.date", "Bronch.date", "PFT.date")
 clinical <- clinical %>%
     tibble::column_to_rownames("Subject_ID") %>%
     dplyr::select(dplyr::all_of(cols)) 
@@ -176,26 +172,31 @@ std_date <- function(x, format = "%m/%d/%y") {
     x[d] <- as.Date(x[d], format)
     return(x)
 }
-clinical <- clinical %>% dplyr::mutate(dplyr::across(dplyr::everything(), std_date))
+clinical <- dplyr::mutate(clinical, dplyr::across(dplyr::everything(), std_date))
 
-## Center around pivot column
-pivot.col <- "COVID._date"
-pivot.col.vals <- as.numeric(clinical[[pivot.col]])
-clinical <- clinical %>% dplyr::mutate(dplyr::across(dplyr::everything(),
-                                                     function(x) { as.numeric(x) - pivot.col.vals }))
-## Sort subjects
+# Center around COVID date
+pvt_col <- as.numeric(clinical[["COVID._date"]])
+clinical <- dplyr::mutate(clinical,
+    dplyr::across(dplyr::everything(), function(x) { as.numeric(x) - pvt_col }
+))
+
+# Sort subjects
 clinical <- clinical[order(apply(clinical, 1, max, na.rm = TRUE)), ]
 
-## Convert to months
+# Convert to months
 clinical <- clinical / 30
 
-## Record min/max of each row, and add column to specify height
+# Record min/max of each row, and add column to specify height
 row_mins <- apply(clinical, 1, min, na.rm = TRUE)
 row_maxs <- apply(clinical, 1, max, na.rm = TRUE)
 clinical$y <- seq(dim(clinical)[1])
 minmax_df <- data.frame(xmin = row_mins, xmax = row_maxs, y = clinical$y)
 
-## Compare change in normal fraction with interval between CT scans
+print(sprintf("Median time between infection and initial scan = %.0f +/- %.1f days",
+              30 * median(clinical$CT.scan.1.date),
+              30 * sd(clinical$CT.scan.1.date)))
+
+# Compare change in normal fraction with interval between CT scans
 ct_interval_df <- clinical %>%
     dplyr::select("CT.scan.1.date", "CT.scan.2.date") %>%
     dplyr::mutate(CT.interval = CT.scan.2.date - CT.scan.1.date) %>%
@@ -212,22 +213,30 @@ ct_interval_df <- ct_interval_df %>%
     na.omit() %>%
     dplyr::select(Normal.change = "Normal (diff)", CT.interval)
 
-## Correlation of time between scans and normal change
-print(sprintf("Correlation between interval and normal change = %.2f",
-              cor(ct_interval_df$Normal.change, ct_interval_df$CT.interval, method = "spearman")))
-test <- coin::spearman_test(
-    Normal.change ~ CT.interval, data = ct_interval_df,
-    distribution = coin::approximate(nresample = 1e7,
+# Build Figure S1b
+# Correlation of time between scans and normal change for all subjects
+df <- data.frame(x = ct_interval_df$CT.interval,
+                 y = ct_interval_df$Normal.change)
+corr <- cor(df$x, df$y, method = "spearman")
+pval <- as.numeric(coin::pvalue(coin::spearman_test(
+    y ~ x, data = df,
+    distribution = coin::approximate(nresample = 1e6,
                                      parallel = "multicore",
-                                     ncpus = 16L)
-)
-print(sprintf("p-value = %.2f", as.numeric(pvalue(test))))
-
-fig_s1 <- ggplot(ct_interval_df, aes(x = CT.interval, y = Normal.change)) +
+                                     ncpus = 16)
+)))
+pl <- paste0("p==", deparse(sprintf("%.3f", pval)))
+rl <- paste0("rho==", deparse(sprintf("%.3f", corr)))
+fig_s1b <- ggplot(df, aes(x, y)) +
     geom_point() +
     stat_smooth(method = "lm", formula = y ~ x) +
     xlab("Months between CT scans") +
     ylab("Change in normal fraction") +
+    annotate("text",
+             x = 0.90 * max(df$x),
+             y = c(0.92, 1.00) * max(df$y),
+             hjust = 0,
+             label = c(pl, rl),
+             parse = TRUE) +
     theme_bw(base_family = "Arial") +
     theme(text = element_text(family = "Arial"),
           legend.position = "none",
@@ -240,18 +249,57 @@ fig_s1 <- ggplot(ct_interval_df, aes(x = CT.interval, y = Normal.change)) +
           axis.text.y = element_text(size = 12, color = "black"),
           axis.title.x = element_text(size = 13, color = "black"),
           axis.title.y = element_text(size = 13, color = "black"))
-ggsave(plot = fig_s1,
-       filename = "figures/fig_s1/fig_s1.pdf",
-       width = 8, height = 7, device = cairo_pdf)
 
-## Melt data frame
+# Build Figure S1c
+# Correlation of time between scans and normal change for improving subjects
+ct_interval_df_impr <- ct_interval_df[ct_interval_df$Normal.change > 0, ]
+df <- data.frame(x = ct_interval_df_impr$CT.interval,
+                 y = ct_interval_df_impr$Normal.change)
+corr <- cor(df$x, df$y, method = "spearman")
+pval <- as.numeric(coin::pvalue(coin::spearman_test(
+    y ~ x, data = df,
+    distribution = coin::approximate(nresample = 1e6,
+                                     parallel = "multicore",
+                                     ncpus = 16)
+)))
+pl <- paste0("p==", deparse(sprintf("%.3f", pval)))
+rl <- paste0("rho==", deparse(sprintf("%.3f", corr)))
+fig_s1c <- ggplot(df, aes(x, y)) +
+    geom_point() +
+    stat_smooth(method = "lm", formula = y ~ x) +
+    xlab("Months between CT scans") +
+    ylab("Change in normal fraction") +
+    annotate("text",
+             x = 0.90 * max(df$x),
+             y = c(0.95, 1.00) * max(df$y),
+             hjust = 0,
+             label = c(pl, rl),
+             parse = TRUE) +
+    theme_bw(base_family = "Arial") +
+    theme(text = element_text(family = "Arial"),
+          legend.position = "none",
+          panel.grid.major.x = element_blank(),
+          panel.grid.major.y = element_blank(),
+          panel.grid.minor.x = element_blank(),
+          panel.grid.minor.y = element_blank(),
+          plot.title = element_text(hjust = 0.5),
+          axis.text.x = element_text(size = 12, color = "black"),
+          axis.text.y = element_text(size = 12, color = "black"),
+          axis.title.x = element_text(size = 13, color = "black"),
+          axis.title.y = element_text(size = 13, color = "black"))
+
+# Save for later use
+saveRDS(fig_s1b, file = "data/figures/fig_s1/fig_s1b.rds")
+saveRDS(fig_s1c, file = "data/figures/fig_s1/fig_s1c.rds")
+
+# Melt data frame
 clinical <- clinical %>%
     tibble::rownames_to_column("Study.ID") %>%
     dplyr::relocate("Study.ID", .after = last_col()) %>%
     reshape2::melt(., id.vars = "y", variable.name = "cdata") %>%
     na.omit()
 
-## Set plot aesthetics
+# Set plot aesthetics
 cnames <- c("COVID-19 diagnosis", "ICU admission", "Hospital discharge",
             "Intubation", "Extubation/Tracheostomy", "CT Scan 1", "CT Scan 2",
             "Bronchoscopy", "PFT", "Steroid treatment")
@@ -262,7 +310,7 @@ shapes <- setNames(c(1, 3, 4, 0, 7, 6, 2, 10, 13, 1), cnames)
 alphas <- setNames(c(rep(1, length(cnames) - 1), 0), cnames)
 linetypes <- setNames(rep(1, length(cnames)), cnames)
 
-## Plot steroid treatment as a line, everything else as a point
+# Plot steroid treatment as a line, everything else as a point
 ids <- clinical %>% dplyr::filter(cdata == "Study.ID") %>% dplyr::pull(value)
 dates <- clinical %>%
     dplyr::filter(!cdata %in% c("Study.ID", "Group")) %>%
@@ -272,7 +320,7 @@ lines <- data.frame(x = dates[dates$cdata == "Steroid.start.date", "value"],
                     xend = dates[dates$cdata == "Steroid.end.date", "value"],
                     y = dates[dates$cdata == "Steroid.start.date", "y"])
 
-## Adjust names in legend
+# Adjust names in legend
 points$cdata <- points$cdata %>%
     dplyr::recode(COVID._date = "COVID-19 diagnosis",
                   acute_COVID_admission_date = "ICU admission",
@@ -287,7 +335,7 @@ points$cdata <- points$cdata %>%
     droplevels() %>%
     factor(levels = cnames)
 
-## Set plot parameters
+# Set plot parameters
 pt_size <- 2
 pt_thickness <- 0.6
 line_size <- 1.5
@@ -335,24 +383,31 @@ timeline <- ggplot(data = points) +
 
 ##--------------- Alluvial plot ---------------##
 
-tbl <- read.csv("deidentified_data/deidentified_metadata.csv", header = TRUE) %>%
-    dplyr::select("Flow" = Flow.Cytometry,
+meta <- read.csv("data/deidentified_data/deidentified_metadata.csv", header = TRUE)
+event_cols <- c("CT1", "Bronch", "Flow", "BAL", "Cytokines", "NEP", "CT2")
+tbl <- meta %>%
+    dplyr::mutate(Bronchoscopy = ifelse(meta$Bronch.date != "", "Yes", "No")) %>%
+    dplyr::select("Bronch" = Bronchoscopy,
+                  "Flow" = Flow.Cytometry,
                   "Cytokines" = Cytokines,
                   "CT1" = CT.Scan.1,
                   "CT2" = CT.Scan.2,
                   "BAL" = BAL.scRNAseq,
                   "NEP" = NEP.scRNAseq) %>%
     dplyr::count(dplyr::across(dplyr::everything())) %>%
-    tidyr::pivot_longer(cols = c("CT1", "CT2", "Flow", "BAL", "Cytokines", "NEP")) %>%
+    tidyr::pivot_longer(cols = event_cols) %>%
     dplyr::select(Analysis = name, Freq = n, Value = value) %>%
-    dplyr::mutate(Analysis = factor(Analysis,
-                                    levels = c("CT1", "Flow", "BAL", "Cytokines", "NEP", "CT2"))) %>%
+    dplyr::mutate(Analysis = factor(Analysis, levels = event_cols)) %>%
     dplyr::arrange(Analysis) %>%
-    dplyr::mutate(Subject = rep(seq(9), 6)) %>%
-    dplyr::mutate(Analysis = recode(Analysis, CT1 = "CT Scan 1", CT2 = "CT Scan 2",
-                                    Flow = "BAL Flow Cytometry", BAL = "BAL scRNA-seq",
+    dplyr::mutate(Subject = rep(seq(10), length(event_cols))) %>%
+    dplyr::mutate(Analysis = recode(Analysis,
+                                    CT1 = "CT Scan 1",
+                                    CT2 = "CT Scan 2",
+                                    Flow = "BAL Flow Cytometry",
+                                    BAL = "    BAL scRNA-seq",
                                     NEP = "Nasal scRNA-seq",
-                                    Cytokines = "BAL Cytokines"))
+                                    Cytokines = "BAL Cytokines",
+                                    Bronch = "Bronchoscopy"))
 river <- ggplot(tbl, aes(x = Analysis, stratum = Value, alluvium = Subject,
                          y = Freq, fill = Value, label = Value)) +
     scale_x_discrete(expand = c(0, 0.2, 0, 0.3)) +
@@ -388,9 +443,9 @@ pplt <- plt_a + plt_b + plt_c + plt_d + plot_layout(
                area(t = 2, b = 2, l = 1, r = 1),
                area(t = 2, b = 2, l = 2, r = 2),
                area(t = 3, b = 3, l = 1, r = 2)),
-    widths = c(8.75, 7.25),
+    widths = c(9.2, 6.8),
     heights = c(7, 4.5, 4.5))
 
 ggsave(plot = pplt,
-       filename = "figures/fig_1/fig1.pdf",
+       filename = "data/figures/fig_1/fig1.pdf",
        width = 16, height = 16, device = cairo_pdf)
