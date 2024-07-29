@@ -1,4 +1,3 @@
-setwd("/projects/b1038/Pulmonary/cpuritz/PASC/data")
 set.seed(0)
 
 library(ggplot2)
