@@ -1,10 +1,9 @@
-setwd("/projects/b1038/Pulmonary/cpuritz/PASC/data")
 set.seed(1, kind = "L'Ecuyer-CMRG")
 
 library(dplyr)
+library(tidyr)
 library(ggplot2)
 library(tibble)
-library(tidyr)
 library(coin)
 library(ggsci)
 library(ggsignif)
@@ -15,20 +14,20 @@ library(reshape2)
 library(RColorBrewer)
 library(ComplexHeatmap)
 
-source("../code/util/pairwise_wilcox_test.R")
+source("code/util/pairwise_wilcox_test.R")
 
-## Read in data
+# Read in data
 cyto <- read.csv(
-    file = "deidentified_data/deidentified_cytokine_data.csv",
+    file = "data/deidentified_data/deidentified_cytokine_data.csv",
     check.names = FALSE
 )
 palette <- setNames(pal_npg("nrc")(3),
                     c("RPRA", "Healthy", "RPRA (transplant)"))
 
-## Fix analyte names
+# Fix analyte names
 cyto[cyto$analyte == "Eotaxin", "analyte"] <- "Eotaxin-1"
 
-## Exclude serum samples, rename diagnoses, select columns of interest
+# Exclude serum samples, rename diagnoses, select columns of interest
 cyto <- cyto %>%
     dplyr::filter(sample_origin == "BAL") %>%
     dplyr::select(-sample_origin, -display_name) %>%
@@ -36,17 +35,20 @@ cyto <- cyto %>%
     pivot_wider(names_from = analyte, values_from = mean_concentration)
 cyto$Group[cyto$Subject_ID %in% c("RPRA12", "RPRA13")] <- "RPRA (transplant)"
 
-## Remove analytes that weren't measured in any sample
+# Remove analytes that weren't measured in any sample
 cat_cols <- c("Subject_ID", "diagnosis", "Group")
 num_cols <- which(!colnames(cyto) %in% cat_cols)
-cyto <- cyto[,c(cat_cols, names(which(colSums(cyto[num_cols]) != 0)))]
+cyto <- cyto[, c(cat_cols, names(which(colSums(cyto[num_cols]) != 0)))]
 analytes <- setdiff(colnames(cyto), cat_cols)
 
-## Perform pairwise Wilcoxon rank sum tests with FDR correction
-all_comps <- boxplot_signif(cyto, analytes, group.var = "diagnosis",
-                            var.name = "analyte", annot = "value")
+# Perform pairwise Wilcoxon rank sum tests with FDR correction
+all_comps <- boxplot_signif(df = cyto,
+                            cols = analytes,
+                            group.var = "diagnosis",
+                            var.name = "analyte",
+                            annot = "value")
 
-## Use Greek letters in cytokine names where necessary
+# Use Greek letters in cytokine names where necessary
 # Used for boxplot titles and CT correlation heatmap
 convert_greek <- function(v) {
     l0 <- c("MIP-1a", "MIP-1b", "MIP-1d", "IL-1a", "IL-1b", "TNFa", "TNFb")
@@ -80,14 +82,14 @@ sub_greek <- function(v) {
     })
 }
 
-## Create boxplots
+# Create boxplots
 signif_plots <- list()
 nonsignif_plots <- list()
 for (i in 1:length(analytes)) {
     data <- cyto %>%
         dplyr::select(dplyr::all_of(c("diagnosis", analytes[i]))) %>%
         dplyr::rename(analyte = analytes[i])
-    comparisons <-  dplyr::filter(all_comps, analyte == analytes[i])
+    comparisons <- dplyr::filter(all_comps, analyte == analytes[i])
     pplt <- ggplot(data, aes(x = diagnosis, y = analyte, fill = diagnosis)) +
         geom_boxplot(outlier.shape = NA) +
         scale_fill_manual(values = palette) +
@@ -106,8 +108,7 @@ for (i in 1:length(analytes)) {
               panel.grid.minor.y = element_blank(),
               plot.title = element_text(hjust = 0.5))
     if (dim(comparisons)[1] > 0) {
-        signif_plots[[length(signif_plots) + 1]] <-
-            pplt +
+        signif_plots[[length(signif_plots) + 1]] <- pplt +
             ylim(c(0, max(comparisons$y))) +
             geom_signif(xmin = comparisons$xmin,
                         xmax = comparisons$xmax,
@@ -120,26 +121,28 @@ for (i in 1:length(analytes)) {
     }
 }
 
-ylabel <- ggplot(data.frame(l = "Mean concentration", x = 1, y = 1)) +
+ylabel <- ggplot(data.frame(l = "Mean concentration (pg/mL)", x = 1, y = 1)) +
     geom_text(aes(x, y, label = l), angle = 90, size = 4.5) +
     theme_void(base_family = "Arial") +
     theme(text = element_text(family = "Arial")) +
     coord_cartesian(clip = "off")
-signif_boxplots <- ylabel + wrap_plots(signif_plots, ncol = 4) +
+signif_boxplots <- ylabel +
+    wrap_plots(signif_plots, ncol = 4) +
     plot_layout(widths = c(1, 30))
-nonsignif_boxplots <- ylabel + wrap_plots(nonsignif_plots, ncol = 7) +
+nonsignif_boxplots <- ylabel +
+    wrap_plots(nonsignif_plots, ncol = 7) +
     plot_layout(widths = c(1, 30))
 
 
-## Hierarchical clustering
+# Hierarchical clustering
 cyto_sub <- column_to_rownames(cyto, "Subject_ID")
 group_annot <- cyto_sub %>% dplyr::select(Group) %>% dplyr::rename(Diagnosis = Group)
 cyto_mat <- cyto_sub %>% dplyr::select(-diagnosis, -Group) %>% as.matrix() %>% t()
 
-## z-score matrix rows
+# z-score rows
 scale_rows <- function(x) {
-    m = apply(x, 1, mean, na.rm = T)
-    s = apply(x, 1, sd, na.rm = T)
+    m <- apply(x, 1, mean)
+    s <- apply(x, 1, sd)
     return((x - m) / s)
 }
 cyto_mat_scaled <- scale_rows(cyto_mat)
@@ -148,10 +151,14 @@ legend_param <- function(s, l) {
     list(legend_height = unit(l, "cm"), at = seq(-s, s, s/2))
 }
 
-s <- ceiling(max(abs(min(cyto_mat_scaled)), max(cyto_mat_scaled)))
+s <- ceiling(max(abs(min(cyto_mat_scaled)), abs(max(cyto_mat_scaled))))
 ph_pal <- colorRampPalette(rev(brewer.pal(n = 7, name = "RdBu")))(1001)
 
-heatmap <- ComplexHeatmap::pheatmap(
+pheatmap2ggplot <- function (ph) {
+    wrap_elements(grid.grabExpr(ComplexHeatmap::draw(ph, merge_legend = T)))
+}
+
+heatmap <- pheatmap2ggplot(ComplexHeatmap::pheatmap(
     scale_rows(cyto_mat),
     cluster_rows = T,
     cluster_cols = T,
@@ -166,14 +173,13 @@ heatmap <- ComplexHeatmap::pheatmap(
     labels_row = convert_greek(rownames(cyto_mat)),
     annotation_col = group_annot,
     annotation_color = list(Diagnosis = palette),
-    name = "Mean\nconcentration",
+    name = "Row z-score",
     heatmap_legend_param = legend_param(s, 4)
-)
-heatmap <- wrap_elements(grid.grabExpr(ComplexHeatmap::draw(heatmap, merge_legend = T)))
+))
 
-## Correlation with CT features
+# Correlation with CT features
 ct_features <- c("Normal", "Fibrotic", "Inflammatory", "Nodularity")
-ct_data <- read.csv("deidentified_data/deidentified_ct_scan_1_data.csv",
+ct_data <- read.csv("data/deidentified_data/deidentified_ct_scan_1_data.csv",
                     check.names = FALSE)
 
 cyto_ct <- cyto %>%
@@ -188,30 +194,29 @@ cor_mat <- matrix(nrow = length(analytes),
 p_mat <- matrix(nrow = length(analytes),
                 ncol = length(ct_features),
                 dimnames = list(analytes, ct_features))
+cdst <- coin::approximate(nresample = 1e6,
+                          parallel = "multicore",
+                          ncpus = 16)
 for (i in 1:length(analytes)) {
     for (j in 1:length(ct_features)) {
-        x <- cyto_ct[,analytes[i]]
-        y <- cyto_ct[,ct_features[j]]
+        x <- cyto_ct[, analytes[i]]
+        y <- cyto_ct[, ct_features[j]]
         cor_mat[i, j] <- cor(x, y, method = "spearman")
-        test <- coin::spearman_test(
-            x ~ y,
-            data = data.frame(x, y),
-            distribution = coin::approximate(nresample = 1e6,
-                                             parallel = "multicore",
-                                             ncpus = 16)
-        )
+        test <- coin::spearman_test(x ~ y,
+                                    data = data.frame(x, y),
+                                    distribution = cdst)
         p_mat[i, j] <- coin::pvalue(test)[1]
     }
 }
 
-cor_df <- cor_mat %>% melt() %>% dplyr::rename(Correlation = value)
-p_df <- p_mat %>% melt() %>% dplyr::rename(pval = value)
+cor_df <- dplyr::rename(melt(cor_mat), Correlation = value)
+p_df <- dplyr::rename(melt(p_mat), pval = value)
 p_adj <- p.adjust(as.vector(p_df$pval, mode = "numeric"), method = "fdr")
 cor_df_full <- cor_df %>%
     dplyr::full_join(p_df, by = c("Var1", "Var2")) %>%
     dplyr::mutate(padj = p_adj)
 
-## Add annotations
+# Add annotations
 cor_mat_vec <- as.vector(cor_mat, mode = "numeric")
 annot <- sapply(seq(length(p_adj)), function (i) {
     ifelse(p_adj[i] < 0.05, sprintf("%.2f", cor_mat_vec[i]), "")
@@ -219,8 +224,8 @@ annot <- sapply(seq(length(p_adj)), function (i) {
 p_adj_mat <- matrix(p_adj, nrow = dim(cor_mat)[1], dimnames = dimnames(p_mat))
 annot_mat <- matrix(annot, nrow = dim(cor_mat)[1], dimnames = dimnames(p_mat))
 
-## Plot CT correlation matrix
-ct_corr <- ComplexHeatmap::pheatmap(
+# Plot CT correlation matrix
+ct_corr <- pheatmap2ggplot(ComplexHeatmap::pheatmap(
     t(cor_mat),
     cluster_rows = T,
     cluster_cols = T,
@@ -238,10 +243,9 @@ ct_corr <- ComplexHeatmap::pheatmap(
     fontsize_number = 8,
     name = "Correlation",
     heatmap_legend_param = legend_param(1, 3)
-)
-ct_corr <- wrap_elements(grid.grabExpr(ComplexHeatmap::draw(ct_corr, merge_legend = T)))
+))
 
-## Point and line plots
+# Point and line plots
 plplots <- list()
 for (i in 1:length(analytes)) {
     for (j in 1:length(ct_features)) {
@@ -252,13 +256,17 @@ for (i in 1:length(analytes)) {
         df <- data.frame(x = cyto_ct[,ct], y = cyto_ct[,analyte])
         ql <- paste0("q==", deparse(sprintf("%.3f", p_adj_mat[i, j])))
         rl <- paste0("rho==", deparse(sprintf("%.3f", cor(df$x, df$y, method = "s"))))
-        pplt <- ggplot(df, aes(x, y)) +
+        plplots[[fname]] <- ggplot(df, aes(x, y)) +
             geom_point() +
             stat_smooth(method = "lm", formula = y ~ x) +
-            annotate("text", x = min(df$x), y = c(1.06, 1.13) * max(df$y),
-                     hjust = 0, label = c(ql, rl), parse = TRUE) +
+            annotate("text",
+                     x = min(df$x),
+                     y = c(1.06, 1.13) * max(df$y),
+                     hjust = 0,
+                     label = c(ql, rl),
+                     parse = TRUE) +
             xlab(paste(ct, "fraction of lung")) +
-            ylab("Mean concentration") +
+            ylab("Mean concentration (pg/mL)") +
             ggtitle(analyte) +
             theme_bw() +
             theme(panel.grid.major.x = element_blank(),
@@ -266,14 +274,13 @@ for (i in 1:length(analytes)) {
                   panel.grid.minor.x = element_blank(),
                   panel.grid.minor.y = element_blank(),
                   plot.title = element_text(hjust = 0.5))
-        plplots[[fname]] <- pplt
     }
 }
 
 ## Deconvolution
 # Only significant cytokines
 mean_expr <- read.csv(
-    file = "deidentified_data/deidentified_cytokine_mean_expression.csv",
+    file = "data/deidentified_data/deidentified_cytokine_mean_expression.csv",
     check.names = FALSE
 )
 colnames(mean_expr)[1] <- "Analyte"
@@ -281,9 +288,9 @@ mean_expr <- column_to_rownames(mean_expr, "Analyte")
 colnames(mean_expr) <- gsub("macrophages", "MPs", colnames(mean_expr))
 
 mean_expr_scaled <- scale_rows(as.matrix(mean_expr))
-s <- ceiling(max(abs(min(mean_expr_scaled)), max(mean_expr_scaled)))
+s <- ceiling(max(abs(min(mean_expr_scaled)), abs(max(mean_expr_scaled))))
 
-deconv <- ComplexHeatmap::pheatmap(
+deconv <- pheatmap2ggplot(ComplexHeatmap::pheatmap(
     mean_expr_scaled,
     cluster_rows = T,
     cluster_cols = F,
@@ -297,23 +304,22 @@ deconv <- ComplexHeatmap::pheatmap(
     border_color = NA,
     color = ph_pal,
     breaks = seq(-s, s, length.out = length(ph_pal)),
-    name = "Mean\nexpression",
+    name = "Row z-score",
     heatmap_legend_param = legend_param(s, 4)
-)
-deconv <- wrap_elements(grid.grabExpr(ComplexHeatmap::draw(deconv, merge_legend = T)))
+))
 
 # All cytokines
 mean_expr_all <- read.csv(
-    file = "deidentified_data/deidentified_cytokine_mean_expression_all.csv",
+    file = "data/deidentified_data/deidentified_cytokine_mean_expression_all.csv",
     check.names = FALSE
 )
 colnames(mean_expr_all)[1] <- "Analyte"
 mean_expr_all <- column_to_rownames(mean_expr_all, "Analyte")
 
 mean_expr_all_scaled <- scale_rows(as.matrix(mean_expr_all))
-s <- ceiling(max(abs(min(mean_expr_all_scaled)), max(mean_expr_all_scaled)))
+s <- ceiling(max(abs(min(mean_expr_all_scaled)), abs(max(mean_expr_all_scaled))))
 
-deconv_all <- ComplexHeatmap::pheatmap(
+deconv_all <- pheatmap2ggplot(ComplexHeatmap::pheatmap(
     t(mean_expr_all_scaled),
     cluster_rows = F,
     cluster_cols = T,
@@ -326,25 +332,26 @@ deconv_all <- ComplexHeatmap::pheatmap(
     border_color = NA,
     color = ph_pal,
     breaks = seq(-s, s, length.out = length(ph_pal)),
-    name = "Mean\nexpression",
+    name = "Column z-score",
     heatmap_legend_param = legend_param(s, 5)
-)
-deconv_all <- wrap_elements(grid.grabExpr(ComplexHeatmap::draw(deconv_all, merge_legend = T)))
+))
 
-
-## Build Figure 5
-get_annot <- function (x) {
-    plot_annotation(title = x, theme = theme(plot.title = element_text(face = 2, size = 20)))
+# Build Figure 6
+get_annot <- function(x) {
+    plot_annotation(
+        title = x,
+        theme = theme(plot.title = element_text(face = 2, size = 20))
+    )
 }
 thm <- theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))
 
-fig_5a <- wrap_elements(heatmap + get_annot("a") + thm)
-fig_5b <- wrap_elements(signif_boxplots + get_annot("b") + thm)
-fig_5c <- wrap_elements(ct_corr + get_annot("c") + thm)
-fig_5d <- wrap_elements(plplots[["MCP_1_Fibrotic"]] + get_annot("d") + thm)
-fig_5e <- wrap_elements(deconv + get_annot("e") + thm)
+fig_6a <- wrap_elements(heatmap + get_annot("a") + thm)
+fig_6b <- wrap_elements(signif_boxplots + get_annot("b") + thm)
+fig_6c <- wrap_elements(ct_corr + get_annot("c") + thm)
+fig_6d <- wrap_elements(plplots[["MCP_1_Fibrotic"]] + get_annot("d") + thm)
+fig_6e <- wrap_elements(deconv + get_annot("e") + thm)
 
-fig5 <- fig_5a + fig_5b + fig_5c + fig_5d + fig_5e +
+fig6 <- fig_6a + fig_6b + fig_6c + fig_6d + fig_6e +
     plot_layout(
         design = c(patchwork::area(t = 1, b = 1, l = 1, r = 2),
                    patchwork::area(t = 1, b = 1, l = 3, r = 3),
@@ -354,12 +361,12 @@ fig5 <- fig_5a + fig_5b + fig_5c + fig_5d + fig_5e +
         heights = c(0.59, 0.15, 0.24, 0.02),
         widths = c(0.5, 0.45, 1)
     ) & theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))
-ggsave(plot = fig5, filename = "figures/fig_5/fig5.pdf",
+ggsave(plot = fig6, filename = "data/figures/fig_6/fig6.pdf",
        width = 20, height = 20, device = cairo_pdf)
 
-## Build Figure S5
-fig_s5_a <- wrap_elements(nonsignif_boxplots + get_annot("a") + thm)
-fig_s5_b <- wrap_elements(deconv_all + get_annot("b") + thm)
-fig_s5 <- (fig_s5_a / fig_s5_b) + plot_layout(heights = c(0.45, 0.55))
-ggsave(plot = fig_s5, filename = "figures/fig_s5/fig_s5.pdf",
+# Build Figure S6
+fig_s6_a <- wrap_elements(nonsignif_boxplots + get_annot("a") + thm)
+fig_s6_b <- wrap_elements(deconv_all + get_annot("b") + thm)
+fig_s6 <- (fig_s6_a / fig_s6_b) + plot_layout(heights = c(0.45, 0.55))
+ggsave(plot = fig_s6, filename = "data/figures/fig_s6/fig_s6.pdf",
        width = 17.5, height = 20, device = cairo_pdf)
