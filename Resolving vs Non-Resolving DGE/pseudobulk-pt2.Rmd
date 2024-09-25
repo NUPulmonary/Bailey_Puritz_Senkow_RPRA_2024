@@ -1,0 +1,236 @@
+# Pseudobulk pt 2
+Pseudobulk analysis of resolving RPRA vs non-resolving RPRA samples from [Bailey et al. bioRxiv 2023](https://www.biorxiv.org/content/10.1101/2023.07.30.551145v1.full#F1).
+
+In this notebook, I import the pseudobulk counts (gene sums) and number of cells for each sample generated in the previous notebook and use this information to:
+- filter out: 
+  - samples containing < 10 cells, 
+  - cell types containing only one status,
+  - cell types with only one sample for a particular status
+- plot:
+  - number of cells per sample in each cell type
+  - number of genes detected in each sample
+  - number of unique counts per library
+  - heatmap of library distances
+  - local and parametric fit
+  - PCA
+  - MA plot
+- output (as csv):
+  - DEGs
+  - DEGs from MA plot (padj < 0.05)
+  
+Output can be found here:
+`../../../data/22deg-analysis/bailey_resolv_vs_nonresolv_v2/pseudobulk/ouput`
+  
+See next notebook for further analysis.
+
+## Import packages
+
+```{r}
+library(DESeq2)
+library(ggplot2)
+library(ggrepel)
+library(pheatmap)
+library(R.utils)
+library(vsn)
+```
+
+```{r}
+plot_lib_sizes <- function(data) {
+    df <- data.frame(lib.size = sort(colSums(data)))
+        ggplot(df, aes(x = reorder(rownames(df), lib.size), y = lib.size)) +
+        geom_col() +
+        ggtitle("Sorted library sizes") +
+        theme(axis.text.x = element_text(angle = 90, vjust = .5, hjust = 1)) +
+        xlab("")
+}
+```
+
+```{r}
+DATA_DIR <- "../../../data/22deg-analysis/bailey_resolv_vs_nonresolv_v2/pseudobulk/input"
+OUT_DIR <- "../../../data/22deg-analysis/bailey_resolv_vs_nonresolv_v2/pseudobulk/output"
+```
+
+
+```{r}
+process_cell_type <- function(cell_type) {
+  print(sprintf("Processing %s", cell_type))
+  data <- read.table(sprintf("%s/%s.txt", DATA_DIR, cell_type), header = TRUE, check.names = FALSE)
+  coldata <- read.csv(sprintf("%s/%s-meta.csv", DATA_DIR, cell_type), check.names = FALSE)
+  
+  if (length(unique(coldata$Status)) < 2) {
+    print("Only one Status, skipping")
+    return()
+  }
+
+  if (count(coldata$Status == 'RPRA resolving') < 2) {
+    print("Only one RPRA resolving sample, skipping")
+    return()
+  }
+
+  if (count(coldata$Status == 'RPRA non-resolving') < 2) {
+    print("Only one RPRA non-resolving sample, skipping")
+    return()
+  }
+
+  dir <- sprintf("%s/%s", OUT_DIR, cell_type)
+  R.utils::mkdirs(dir)
+  write.csv(
+    coldata,
+    sprintf("%s/meta.csv", dir)
+  )
+  
+  counts <- as.matrix(data[, coldata[["sample"]]])
+  dds <- DESeqDataSetFromMatrix(round(counts), coldata, ~ Status) 
+
+  pdf(sprintf("%s/lib-sizes.pdf", dir), width = 6, height = 4)
+  plot(plot_lib_sizes(counts))
+  dev.off()
+
+  # Library complexity
+  # TODO: explore other measures of library complexity, like dispersion, skew??
+  d <- data.frame(
+    n_genes = colSums(counts(dds) > 0),
+    uniq_counts = apply(counts(dds), 2, function(x) {return(length(unique(x)))})
+  )
+
+  # Plot number of genes detected in each sample
+  pdf(sprintf("%s/n_genes.pdf", dir), width = 6, height = 4)
+  plot(ggplot(d, aes(x = reorder(rownames(d), n_genes), y = n_genes)) +
+    geom_col() +
+    theme(axis.text.x = element_text(angle = 90, vjust = .5, hjust = 1)) +
+    xlab(""))
+  dev.off()
+
+  # Number of unique counts per library
+  pdf(sprintf("%s/n_unique_counts.pdf", dir), width = 6, height = 4)
+  plot(ggplot(d, aes(x = reorder(rownames(d), uniq_counts), y = uniq_counts)) +
+    geom_col() +
+    theme(axis.text.x = element_text(angle = 90, vjust = .5, hjust = 1)) +
+    xlab(""))
+  dev.off()
+  
+  # needed for GSVA
+  transformed <- assay(vst(dds))
+  write.table(transformed, sprintf('%s/%s-transformed.tsv', DATA_DIR, cell_type), sep="\t", quote=FALSE)
+
+  # Plot heatmap of library similarity
+  sampleDists <- dist(t(assay(vst(dds))))
+
+  pdf(sprintf("%s/lib-dist.pdf", dir), width = 8, height = 8)
+  pheatmap(
+    as.matrix(sampleDists),
+    cluster_cols = TRUE,
+    cluster_rows = TRUE,
+    show_colnames = FALSE,
+    clustering_distance_rows = sampleDists,
+    clustering_distance_cols = sampleDists
+  )
+  dev.off()
+
+  dds <- DESeq(dds, fitType = "parametric")
+  pdf(sprintf("%s/disp-parametric.pdf", dir), width = 6, height = 4)
+  plotDispEsts(dds)
+  dev.off()
+
+  dds <- DESeq(dds, fitType = "local")
+  pdf(sprintf("%s/disp-local.pdf", dir), width = 6, height = 4)
+  plotDispEsts(dds)
+  dev.off()
+
+  pdf(sprintf("%s/pca.pdf", dir), width = 6, height = 4)
+  d <- plotPCA(
+    vst(dds, blind = FALSE),
+    ntop = 2000,
+    intgroup = c("Status"),
+    returnData = TRUE
+  )
+  percentVar <- round(100 * attr(d, "percentVar"))
+  plot_title <- ifelse(cell_type == "moam-1", "MoAM-1", cell_type)
+
+
+# code for Figure 5b
+  plot(ggplot(d, aes(
+    x = PC1,
+    y = PC2,
+    color = Status,
+  )) +
+    geom_point(size = 5) +
+    scale_color_manual(values = c("RPRA non-resolving" = rgb(0.90196078, 0.29411765, 0.20784314), 
+                                  "RPRA resolving" = rgb(0.30196078, 0.73333333, 0.83529412)
+                                  )) +
+    xlab(paste0("PC1: ", percentVar[1], "% variance")) +
+    ylab(paste0("PC2: ", percentVar[2], "% variance")) +
+    coord_fixed() +
+    guides(color = guide_legend(order = 1), shape = guide_legend(order = 2)) +
+    ggtitle(plot_title) +
+    theme_bw() +
+      theme(
+      text = element_text(size = 15),
+      plot.title = element_text(hjust = 0.5),     # Center the plot title
+      legend.title = element_text(size = 15),     # Set legend title font size
+      legend.text = element_text(size = 15),      # Set legend text font size
+      axis.title = element_text(size = 15),       # Set axis title font size
+      axis.text = element_text(size = 15, color = "black"),         # Set axis text font size
+      panel.grid.major = element_blank(),         # Remove major gridlines
+      panel.grid.minor = element_blank()          # Remove minor gridlines
+    )
+  )
+  dev.off()
+
+  degs <- as.data.frame(results(dds, contrast = c("Status", "RPRA resolving", "RPRA non-resolving"), alpha = 0.05))
+  degs <- degs[!is.na(degs$padj), ]
+  
+  write.csv(
+  degs[order(degs$log2FoldChange, decreasing = TRUE), ],
+  sprintf("%s/gsea_degs.csv", dir)
+  )    
+  
+  degs <- degs[(degs$baseMean > 100), ]
+  degs$sign <- ""
+  degs$sign[(degs$log2FoldChange < 0) & (degs$padj < 0.05)] <- "Downregulated"
+  degs$sign[(degs$log2FoldChange > 0) & (degs$padj < 0.05)] <- "Upregulated"
+  degs <- degs[order(degs$sign),]
+
+  pdf(sprintf("%s/ma.pdf", dir), width = 8, height = 6)
+  max_x = max(degs$baseMean)
+  plot(ggplot(degs) +
+    geom_point(aes(x = baseMean, y = log2FoldChange, col = sign)) +
+    scale_x_log10() +
+    scale_color_manual(values = c("gray", "blue", "red")) +
+    geom_text(x = 1e+05, y = 5, label = sprintf("Up in RPRA resolving: %d", sum(degs$sign == "Upregulated")), hjust = 1) +
+    geom_text(x = 1e+05, y = -6, label = sprintf("Up in RPRA non-resolving: %d", sum(degs$sign == "Downregulated")), hjust = 1) +
+    ggtitle("RPRA resolving vs RPRA non-resolving"))
+  dev.off()
+
+  write.csv(
+    degs[order(degs$log2FoldChange, decreasing = TRUE), ],
+    sprintf("%s/degs.csv", dir)
+  )
+
+  sign.only <- degs[(degs$padj < 0.05), ]
+  write.csv(
+    sign.only[order(sign.only$log2FoldChange, decreasing = TRUE), ],
+    sprintf("%s/degs-sign.csv", dir)
+  )
+  print("done")
+}
+```
+
+```{r}
+cell_types <- list.files(DATA_DIR, pattern = "*.csv")
+for (f in cell_types) {
+  coldata <- read.csv(sprintf("%s/%s", DATA_DIR, f), check.names = FALSE)
+  # Require samples with more than 10 cells
+  coldata <- coldata[coldata$n_cells > 10, ]
+  cell_type <- sub("-meta.csv", "", f)
+  # Require at least 1 samples for cell type
+  if (nrow(coldata) > 1) {
+    process_cell_type(cell_type)
+  }
+}
+```
+
+### Next Steps
+The next notebook will summarize the data generated in this notebook. More specifically, it will:
+- Plot & return number of DEGs per cluster
+- Plot & return number of filtered DEGs for each cluster
